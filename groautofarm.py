@@ -14,7 +14,7 @@ class GROFarmerMod(loader.Module):
     
     strings = {
         "name": "GROFarmer",
-        "active": "✅ Авто-фарминг активирован. Команда /farm будет отправляться каждые 3 часа",
+        "active": "✅ Авто-фарминг активирован. Команда /farm будет отправлена СРАЗУ и затем каждые 3 часа",
         "already_active": "⚠️ Авто-фарминг уже активен",
         "stopped": "❌ Авто-фарминг остановлен",
         "not_active": "⚠️ Авто-фарминг не был активен",
@@ -27,7 +27,7 @@ class GROFarmerMod(loader.Module):
     }
 
     strings_ru = {
-        "active": "✅ Авто-фарминг активирован. Команда /farm будет отправляться каждые 3 часа",
+        "active": "✅ Авто-фарминг активирован. Команда /farm будет отправлена СРАЗУ и затем каждые 3 часа",
         "already_active": "⚠️ Авто-фарминг уже активен",
         "stopped": "❌ Авто-фарминг остановлен",
         "not_active": "⚠️ Авто-фарминг не был активен",
@@ -64,7 +64,7 @@ class GROFarmerMod(loader.Module):
             await asyncio.sleep(0.1)
 
     @loader.command(
-        ru_doc="Включить авто-фарминг (отправка /farm каждые 3 часа)"
+        ru_doc="Включить авто-фарминг (отправка /farm СРАЗУ и каждые 3 часа)"
     )
     async def grofarmon(self, message: Message):
         """Включить авто-фарминг"""
@@ -73,13 +73,17 @@ class GROFarmerMod(loader.Module):
             return
 
         self.is_active = True
+        
+        # Сразу отправляем команду
+        await utils.answer(message, self.strings("sending"))
+        await self._send_farm_command()
         await utils.answer(message, self.strings("active"))
         
         if self.task:
             self.task.cancel()
         
         self.task = asyncio.create_task(self._farm_task(message))
-        logger.info("Авто-фарминг активирован")
+        logger.info("Авто-фарминг активирован с немедленной отправкой")
 
     @loader.command(
         ru_doc="Выключить авто-фарминг"
@@ -157,19 +161,17 @@ class GROFarmerMod(loader.Module):
 
     async def _farm_task(self, message: Message = None):
         """Фоновая задача для регулярной отправки команды"""
+        logger.info("Запущена фоновая задача авто-фарминга")
+        
         while self.is_active:
             try:
-                # Первая отправка сразу после активации
-                if not self.last_sent:
-                    await self._send_farm_command()
-                    await asyncio.sleep(self.config["interval"])
-                    continue
-                
                 # Проверяем, прошло ли достаточно времени с последней отправки
-                time_since_last = (datetime.now() - self.last_sent).total_seconds()
-                
-                if time_since_last >= self.config["interval"]:
-                    await self._send_farm_command()
+                if self.last_sent:
+                    time_since_last = (datetime.now() - self.last_sent).total_seconds()
+                    
+                    if time_since_last >= self.config["interval"]:
+                        logger.info("Плановое время отправки /farm")
+                        await self._send_farm_command()
                 
                 # Ждем до следующей проверки (каждую минуту)
                 await asyncio.sleep(60)
@@ -203,12 +205,19 @@ class GROFarmerMod(loader.Module):
             seconds = int(hours * 3600)
             self.config["interval"] = seconds
             
+            # Пересчитываем следующую отправку
+            if self.last_sent:
+                self.next_send = datetime.fromtimestamp(
+                    self.last_sent.timestamp() + seconds
+                )
+            
             await utils.answer(message, f"✅ Интервал обновлен: {hours} часа "
                                        f"({seconds} секунд)")
             
             # Перезапускаем задачу, если она активна
             if self.is_active and self.task:
                 self.task.cancel()
+                await asyncio.sleep(0.1)
                 self.task = asyncio.create_task(self._farm_task(message))
                 
         except ValueError:
