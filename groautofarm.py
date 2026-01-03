@@ -14,7 +14,7 @@ class GROFarmerMod(loader.Module):
     
     strings = {
         "name": "GROFarmer",
-        "active": "✅ Авто-фарминг активирован. Команда /farm будет отправлена СРАЗУ и затем каждые 3 часа",
+        "active": "✅ Авто-фарминг активирован. Команда /farm будет отправлена СРАЗУ и затем каждые {} часов",
         "already_active": "⚠️ Авто-фарминг уже активен",
         "stopped": "❌ Авто-фарминг остановлен",
         "not_active": "⚠️ Авто-фарминг не был активен",
@@ -27,7 +27,7 @@ class GROFarmerMod(loader.Module):
     }
 
     strings_ru = {
-        "active": "✅ Авто-фарминг активирован. Команда /farm будет отправлена СРАЗУ и затем каждые 3 часа",
+        "active": "✅ Авто-фарминг активирован. Команда /farm будет отправлена СРАЗУ и затем каждые {} часов",
         "already_active": "⚠️ Авто-фарминг уже активен",
         "stopped": "❌ Авто-фарминг остановлен",
         "not_active": "⚠️ Авто-фарминг не был активен",
@@ -64,7 +64,7 @@ class GROFarmerMod(loader.Module):
             await asyncio.sleep(0.1)
 
     @loader.command(
-        ru_doc="Включить авто-фарминг (отправка /farm СРАЗУ и каждые 3 часа)"
+        ru_doc="Включить авто-фарминг (отправка /farm СРАЗУ и каждые N часов)"
     )
     async def grofarmon(self, message: Message):
         """Включить авто-фарминг"""
@@ -77,13 +77,16 @@ class GROFarmerMod(loader.Module):
         # Сразу отправляем команду
         await utils.answer(message, self.strings("sending"))
         await self._send_farm_command()
-        await utils.answer(message, self.strings("active"))
+        
+        # Показываем активное сообщение с точным интервалом
+        interval_hours = self.config["interval"] / 3600
+        await utils.answer(message, self.strings("active").format(f"{interval_hours:.2f}"))
         
         if self.task:
             self.task.cancel()
         
         self.task = asyncio.create_task(self._farm_task(message))
-        logger.info("Авто-фарминг активирован с немедленной отправкой")
+        logger.info(f"Авто-фарминг активирован с интервалом {interval_hours:.2f} часов")
 
     @loader.command(
         ru_doc="Выключить авто-фарминг"
@@ -126,11 +129,14 @@ class GROFarmerMod(loader.Module):
             self.next_send.strftime("%H:%M:%S %d.%m.%Y") if self.next_send else "Не запланировано"
         )
         
+        # Показываем точный интервал с двумя знаками после запятой
+        interval_hours = self.config["interval"] / 3600
+        
         response = (
             f"{self.strings('status').format(status)}\n"
             f"{last_sent_str}\n"
             f"{next_send_str}\n"
-            f"📅 Интервал: {self.config['interval'] // 3600} часа"
+            f"📅 Интервал: {interval_hours:.2f} часа"
         )
         
         await utils.answer(message, response)
@@ -184,16 +190,21 @@ class GROFarmerMod(loader.Module):
                 await asyncio.sleep(300)  # Ждем 5 минут при ошибке
 
     @loader.command(
-        ru_doc="Настроить интервал отправки (в часах)"
+        ru_doc="Настроить интервал отправки (в часах, можно дробное: 2.75)"
     )
     async def grofarminterval(self, message: Message):
         """Настроить интервал отправки"""
         args = utils.get_args_raw(message)
         
         if not args:
-            current = self.config["interval"] // 3600
-            await utils.answer(message, f"📅 Текущий интервал: {current} часа\n"
-                                       f"Используйте: .grofarminterval <часы>")
+            # Показываем точный текущий интервал
+            current_hours = self.config["interval"] / 3600
+            await utils.answer(message, 
+                f"📅 Текущий интервал: {current_hours:.2f} часа\n"
+                f"Используйте: .grofarminterval <часы>\n"
+                f"Пример: .grofarminterval 2.75\n"
+                f"Минимум: 0.5 часа (30 минут)"
+            )
             return
         
         try:
@@ -211,8 +222,12 @@ class GROFarmerMod(loader.Module):
                     self.last_sent.timestamp() + seconds
                 )
             
-            await utils.answer(message, f"✅ Интервал обновлен: {hours} часа "
-                                       f"({seconds} секунд)")
+            await utils.answer(message, 
+                f"✅ Интервал обновлен:\n"
+                f"📊 {hours:.2f} часа\n"
+                f"⏱️ {seconds} секунд\n"
+                f"⏳ {int(seconds/60)} минут"
+            )
             
             # Перезапускаем задачу, если она активна
             if self.is_active and self.task:
@@ -221,4 +236,26 @@ class GROFarmerMod(loader.Module):
                 self.task = asyncio.create_task(self._farm_task(message))
                 
         except ValueError:
-            await utils.answer(message, "⚠️ Пожалуйста, укажите число (например: 3 или 1.5)")
+            await utils.answer(message, 
+                "⚠️ Пожалуйста, укажите число\n"
+                "Примеры:\n"
+                "• .grofarminterval 3\n"
+                "• .grofarminterval 2.5\n"
+                "• .grofarminterval 2.75"
+            )
+
+    @loader.command(
+        ru_doc="Показать точный текущий интервал"
+    )
+    async def grofarmcurrent(self, message: Message):
+        """Показать точный текущий интервал"""
+        interval_hours = self.config["interval"] / 3600
+        interval_minutes = self.config["interval"] / 60
+        
+        await utils.answer(message,
+            f"📊 Текущий интервал:\n"
+            f"⏰ {interval_hours:.2f} часа\n"
+            f"⏱️ {self.config['interval']} секунд\n"
+            f"⏳ {interval_minutes:.0f} минут\n"
+            f"📅 {interval_hours*60:.0f} минут"
+        )
